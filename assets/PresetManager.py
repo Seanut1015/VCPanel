@@ -18,7 +18,7 @@ class PresetManager:
         'blue': 'blue'
     }
 
-    def __init__(self, config_file='presets.ini'):
+    def __init__(self, config_file='config.ini'):
         self.config_file = config_file
         self.config = configparser.ConfigParser()
         self._save_timer = None  # 延遲保存定時器
@@ -36,7 +36,7 @@ class PresetManager:
         # 設置預設值
         self.config[self.SETTINGS_SECTION] = {
             'last_preset': '1',
-            'auto_hide_seconds': '5'
+            'auto_hide_seconds': '2'
         }
 
         self.config[self.HOTKEYS_SECTION] = {
@@ -46,8 +46,8 @@ class PresetManager:
             'preset_2': 'alt+2',
             'preset_3': 'alt+3',
             'preset_4': 'alt+4',
-            'brightness_up': 'alt+up',
-            'brightness_down': 'alt+down'
+            'brightness_up': 'alt+x',
+            'brightness_down': 'alt+z'
         }
 
         # 創建空的預設區段
@@ -129,8 +129,8 @@ class PresetManager:
             'preset_2': self.config.get(self.HOTKEYS_SECTION, 'preset_2', fallback='alt+2'),
             'preset_3': self.config.get(self.HOTKEYS_SECTION, 'preset_3', fallback='alt+3'),
             'preset_4': self.config.get(self.HOTKEYS_SECTION, 'preset_4', fallback='alt+4'),
-            'brightness_up': self.config.get(self.HOTKEYS_SECTION, 'brightness_up', fallback='alt+up'),
-            'brightness_down': self.config.get(self.HOTKEYS_SECTION, 'brightness_down', fallback='alt+down')
+            'brightness_up': self.config.get(self.HOTKEYS_SECTION, 'brightness_up', fallback='alt+x'),
+            'brightness_down': self.config.get(self.HOTKEYS_SECTION, 'brightness_down', fallback='alt+z')
         }
 
     def get_auto_hide_seconds(self):
