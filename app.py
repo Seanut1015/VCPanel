@@ -1,14 +1,15 @@
 import sys
 
+from PyQt6.QtCore import QRect, Qt, QTimer
+from PyQt6.QtGui import QAction, QBrush, QCursor, QIcon, QPainter, QPixmap
+from PyQt6.QtWidgets import (QApplication, QButtonGroup, QMenu, QMessageBox,
+                             QStyleFactory, QSystemTrayIcon, QWidget)
+
 from assets.DDCCI import DDCCIController
 from assets.HotkeyManager import GlobalHotkeyManager
 from assets.PresetManager import PresetManager
 from assets.styles import StyleSheets
 from assets.UIMode import UIMode
-from PyQt6.QtCore import QRect, Qt, QTimer
-from PyQt6.QtGui import QAction, QBrush, QIcon, QPainter, QPixmap
-from PyQt6.QtWidgets import (QApplication, QButtonGroup, QMenu, QMessageBox,
-                             QStyleFactory, QSystemTrayIcon, QWidget)
 from UI_files.UI import Ui_Form
 
 QApplication.setHighDpiScaleFactorRoundingPolicy(
@@ -21,29 +22,13 @@ RED = 0x16
 GREEN = 0x18
 BLUE = 0x1A
 
+# X偏移與Y偏移
+X_OFFSET = 0
+Y_OFFSET = 0.9
+
+
 # 初始化控制器
 controller = DDCCIController()
-
-
-class VCPCache:
-    """VCP值緩存管理器"""
-
-    def __init__(self):
-        self._cache = {}
-
-    def set(self, monitor_idx, vcp_code, value):
-        """設置緩存值"""
-        key = f"{monitor_idx}_{vcp_code}"
-        self._cache[key] = value
-
-    def get(self, monitor_idx, vcp_code):
-        """獲取緩存值"""
-        key = f"{monitor_idx}_{vcp_code}"
-        return self._cache.get(key)
-
-    def is_same_value(self, monitor_idx, vcp_code, value):
-        """檢查是否與緩存值相同"""
-        return self.get(monitor_idx, vcp_code) == value
 
 
 class MyWindow(QWidget, Ui_Form):
@@ -57,7 +42,6 @@ class MyWindow(QWidget, Ui_Form):
         self.preset_manager = PresetManager()
         self.hotkey_manager = GlobalHotkeyManager(self)
         self.ui_mode_manager = UIMode(self)
-        self.vcp_cache = VCPCache()
 
         # 初始化狀態變數
         self._init_variables()
@@ -66,7 +50,7 @@ class MyWindow(QWidget, Ui_Form):
         self._setup_components()
 
         # 初始化應用程式
-        self._initialize_app()
+        self._init_app()
 
     def _init_variables(self):
         """初始化狀態變數"""
@@ -77,9 +61,9 @@ class MyWindow(QWidget, Ui_Form):
 
         # VCP相關
         self.monitor_idx = 0  # 使用第一台顯示器
-        self.current_preset = None
+        self.current_preset = [0]*len(controller.monitors)
         self.vcp_changed = False
-        self.cached_brightness = 50  # 預設亮度值
+        self.screen_count = len(controller.monitors)
 
         # 配置相關
         self.auto_hide_seconds = self.preset_manager.get_auto_hide_seconds()
@@ -96,12 +80,63 @@ class MyWindow(QWidget, Ui_Form):
             (self.slider_5, self.label_5, BLUE),
         ]
 
+    def _init_presets(self):
+        """初始化預設配置"""
+        # 檢查並初始化空預設
+        self.preset_manager.initialize_screens(self.screen_count)
+        self._create_empty_presets()
+
+        # 緩存當前亮度值
+        self._load_current_vcp_values()
+
+        # 設置當前預設
+        for i in range(self.screen_count):
+            self.current_preset[i] = self.preset_manager.get_last_preset(i)
+        self._update_button_selection()
+
+    def _init_app(self):
+        """初始化應用程式數據"""
+        self._init_presets()
+        self.hide()  # 初始隱藏
+
+    def _get_current_screen_index(self):
+        """獲取滑鼠當前所在螢幕的索引"""
+        try:
+            # 獲取滑鼠位置
+            cursor_pos = QCursor.pos()
+
+            # 遍歷所有螢幕
+            screens = QApplication.screens()
+            for i, screen in enumerate(screens):
+                if screen.geometry().contains(cursor_pos):
+                    self.monitor_idx = i
+                    break
+            else:
+                # 如果沒找到，返回主螢幕
+                self.monitor_idx = 0
+
+        except Exception:
+            self.monitor_idx = 0  # 預設返回第一個螢幕
+
     def _calculate_default_position(self):
-        """計算預設窗口位置"""
-        screen = QApplication.primaryScreen()
-        screen_geometry = screen.availableGeometry()
-        self.x_default = screen_geometry.width() // 2 - 115
-        self.y_default = screen_geometry.height() - 110
+        """更新每個螢幕的UI預設位置"""
+        self.screen_pos = []
+        screens = QApplication.screens()
+        for screen in screens:
+            geom = screen.availableGeometry()
+            pos = (
+                geom.x() + geom.width() // 2 - 115,
+                geom.y() + geom.height() - geom.height() // 9
+            )
+            self.screen_pos.append(pos)
+        self.x_default, self.y_default = self.screen_pos[0]
+
+    def _position_ui_on_current_screen(self):
+        """根據目前螢幕 index 顯示 UI"""
+        self._get_current_screen_index()
+        if not hasattr(self, 'screen_pos') or len(self.screen_pos) != len(QApplication.screens()):
+            self._calculate_default_position()
+        self.x_default, self.y_default = self.screen_pos[self.monitor_idx]
 
     def _setup_components(self):
         """設置各種UI組件"""
@@ -124,9 +159,6 @@ class MyWindow(QWidget, Ui_Form):
 
         # 應用樣式表
         self.setStyleSheet(StyleSheets.get_main_stylesheet())
-
-        # 設置初始位置
-        self.move(self.x_default, self.y_default)
 
     def _setup_system_tray(self):
         """設置系統托盤"""
@@ -224,39 +256,27 @@ class MyWindow(QWidget, Ui_Form):
             hotkey_config['brightness_down']
         )
 
-    def _initialize_app(self):
-        """初始化應用程式數據"""
-        self._initialize_presets()
-        self.hide()  # 初始隱藏
-
-    def _initialize_presets(self):
-        """初始化預設配置"""
-        # 檢查並初始化空預設
-        self._create_empty_presets()
-
-        # 緩存當前亮度值
-        self._cache_current_brightness()
-
-        # 載入當前VCP值到UI
-        self._loading_preset = True
-        self._load_current_vcp_values()
-        self._loading_preset = False
-
-        # 設置當前預設
-        self.current_preset = self.preset_manager.get_last_preset()
-        self._update_button_selection()
-
     def _create_empty_presets(self):
         """為空的預設填入當前VCP值"""
-        empty_presets = [
-            i for i in range(1, 5)
-            if self.preset_manager.is_preset_empty(i)
-        ]
+        for screen_idx in range(self.screen_count):
+            empty_presets = [
+                i for i in range(1, 5)
+                if self.preset_manager.is_preset_empty(screen_idx, i)
+            ]
 
-        if empty_presets:
-            current_values = self._get_current_vcp_values()
-            for preset_id in empty_presets:
-                self.preset_manager.save_preset(preset_id, current_values)
+            if empty_presets:
+                # 切換到該螢幕獲取VCP值
+                old_monitor = self.monitor_idx
+                self.monitor_idx = screen_idx
+                current_values = self._get_current_vcp_values()
+
+                # 為空預設填入值
+                for preset_id in empty_presets:
+                    self.preset_manager.save_preset(
+                        screen_idx, preset_id, current_values)
+
+                # 恢復原來的螢幕
+                self.monitor_idx = old_monitor
 
     def _get_current_vcp_values(self):
         """獲取當前所有VCP值"""
@@ -269,23 +289,27 @@ class MyWindow(QWidget, Ui_Form):
                 values.append(50)  # 預設值
         return values
 
-    def _cache_current_brightness(self):
-        """緩存當前亮度值"""
-        try:
-            self.cached_brightness = controller.VCP_get(
-                self.monitor_idx, BRIGHTNESS)[0]
-        except Exception:
-            self.cached_brightness = 50
-
     def _load_current_vcp_values(self):
         """載入當前VCP值到UI"""
+        self.vcp_temp = []
+        for i in range(self.screen_count):
+            self.vcp_temp.append([])
+            for slider, label, vcp_code in self.vcp_controls:
+                current_value = controller.VCP_get(
+                    i, vcp_code)[0]
+                self.vcp_temp[i].append(current_value)
+
+    def _set_current_slider_values(self):
+        """載入當前VCP值到UI"""
+        self._loading_preset = True
+        i = 0
         for slider, label, vcp_code in self.vcp_controls:
             try:
-                current_value = controller.VCP_get(
-                    self.monitor_idx, vcp_code)[0]
-                slider.setValue(current_value)
+                slider.setValue(self.vcp_temp[self.monitor_idx][i])
             except Exception:
                 slider.setValue(50)
+            i += 1
+        self._loading_preset = False
 
     # 事件處理方法
     def enterEvent(self, event):
@@ -316,12 +340,12 @@ class MyWindow(QWidget, Ui_Form):
         """預設按鈕點擊事件"""
         if self.ui_mode == 'compact':
             # 快捷模式：載入預設後立即隱藏
-            self.load_preset(preset_id)
+            # self.load_preset(preset_id)
             self.ui_mode_manager.hide_all_panels()
             self.hide()
             self.ui_mode = None
 
-    def _on_slider_changed(self, control_index, value, label):
+    def _on_slider_changed(self, vcp_index, value, label):
         """滑條值改變事件"""
         # 更新標籤顯示
         label.setText(str(value))
@@ -331,35 +355,34 @@ class MyWindow(QWidget, Ui_Form):
         if hasattr(self, '_loading_preset') and self._loading_preset:
             return
 
-        # 更新亮度緩存
-        if control_index == 0:
-            self.cached_brightness = value
-
         # 設定VCP值
-        self._set_vcp_value_with_cache(control_index, value)
-
-    def _toggle_expand(self):
-        """切換展開/收縮狀態"""
-        if self.compact_mode:
-            return  # 快捷模式下不響應
-
-        if self.is_expanded:
-            self.ui_mode_manager.set_collapsed()
-        else:
-            self.ui_mode_manager.set_expanded()
+        self._set_vcp_value(vcp_index, self.vcp_controls[vcp_index][2], value)
 
     # UI顯示方法
+
     def show_collapsed_ui(self):
         """顯示收縮狀態UI"""
+        self._position_ui_on_current_screen()
+        self.slider_1.setValue(self.vcp_temp[self.monitor_idx][0])
         self.ui_mode = 'collapsed'
         self.ui_mode_manager.set_collapsed()
         self._show_and_activate()
 
     def show_compact_ui(self):
         """顯示快捷模式UI"""
+        self._position_ui_on_current_screen()
         self.ui_mode = 'compact'
         self.ui_mode_manager.set_compact()
         self._show_and_activate()
+
+    def _toggle_expand(self):
+        """切換展開/收縮狀態"""
+        if self.is_expanded:
+            self.ui_mode_manager.set_collapsed()
+        else:
+            self._set_current_slider_values()
+            self._update_button_selection()
+            self.ui_mode_manager.set_expanded()
 
     def _show_and_activate(self):
         """顯示並激活窗口"""
@@ -391,46 +414,38 @@ class MyWindow(QWidget, Ui_Form):
         self.load_preset(preset_id)
 
     # VCP操作方法
-
     def adjust_brightness(self, adjustment):
         """調整亮度（快捷鍵觸發）"""
         try:
-            # 計算新亮度值
-            new_brightness = max(
-                0, min(100, self.cached_brightness + adjustment))
-
-            # 更新緩存
-            self.cached_brightness = new_brightness
-
-            # 更新UI（會自動觸發VCP設定）
-            self.slider_1.setValue(new_brightness)
-
             # 顯示UI
             if not self.isVisible():
                 self.show_collapsed_ui()
             else:
                 self._start_auto_hide_timer()
 
+            # 計算新亮度值
+            new_brightness = max(
+                0, min(100, self.vcp_temp[self.monitor_idx][0] + adjustment))
+
+            # 更新UI（會自動觸發VCP設定）
+            self.slider_1.setValue(new_brightness)
+
         except Exception:
             pass  # 靜默處理錯誤
 
-    def _set_vcp_value_with_cache(self, control_index, value):
-        """設定VCP值（帶緩存優化）"""
+    def _set_vcp_value(self, vcp_index, vcp_code, value):
+        """設定VCP值"""
         try:
-            _, _, vcp_code = self.vcp_controls[control_index]
-
-            # 檢查緩存，避免重複設定相同值
-            if not self.vcp_cache.is_same_value(self.monitor_idx, vcp_code, value):
+            if not self.vcp_temp[self.monitor_idx][vcp_index] == value:
                 controller.VCP_set(self.monitor_idx, vcp_code, value)
-                self.vcp_cache.set(self.monitor_idx, vcp_code, value)
-
+                self.vcp_temp[self.monitor_idx][vcp_index] = value
         except Exception:
             pass  # 靜默處理錯誤
 
     # 預設管理方法
     def load_preset(self, preset_id):
         """載入預設配置"""
-        values = self.preset_manager.get_preset(preset_id)
+        values = self.preset_manager.get_preset(self.monitor_idx, preset_id)
         if not values:
             return
 
@@ -438,42 +453,37 @@ class MyWindow(QWidget, Ui_Form):
         self._loading_preset = True
 
         # 設定所有滑條值並更新VCP
-        for i, ((slider, _, _), value) in enumerate(zip(self.vcp_controls, values)):
+        for vcp_index, ((slider, _, vcp_code), value) in enumerate(zip(self.vcp_controls, values)):
             slider.setValue(value)
-            self._set_vcp_value_with_cache(i, value)
+            self._set_vcp_value(
+                vcp_index, self.vcp_controls[vcp_index][2], value)
 
         # 完成載入
         self._loading_preset = False
 
         # 更新狀態
-        self.current_preset = preset_id
-        self.cached_brightness = values[0]  # 更新亮度緩存
-        self.preset_manager.save_last_preset(preset_id)
+        self.current_preset[self.monitor_idx] = preset_id
+        self.preset_manager.save_last_preset(preset_id, self.monitor_idx)
         self._update_button_selection()
 
     def _save_current_preset(self):
         """保存當前值到選中的預設"""
-        if self.current_preset is not None:
-            current_values = [slider.value()
-                              for slider, _, _ in self.vcp_controls]
+        if self.current_preset[self.monitor_idx] is not None:
             self.preset_manager.save_preset(
-                self.current_preset, current_values)
+                self.monitor_idx, self.current_preset[self.monitor_idx], self.vcp_temp[self.monitor_idx])
 
     def _update_button_selection(self):
         """更新按鈕選取效果"""
         # 避免重複更新相同狀態
-        if hasattr(self, '_last_selected_preset') and self._last_selected_preset == self.current_preset:
+        if hasattr(self, '_last_selected_preset') and self._last_selected_preset == self.current_preset[self.monitor_idx]:
             return
-
         buttons = [self.button_1, self.button_2, self.button_3, self.button_4]
-
         for i, button in enumerate(buttons, 1):
-            if i == self.current_preset:
+            if i == self.current_preset[self.monitor_idx]:
                 button.setStyleSheet(StyleSheets.get_selected_button_style())
             else:
                 button.setStyleSheet(StyleSheets.get_normal_button_style())
-
-        self._last_selected_preset = self.current_preset
+        self._last_selected_preset = self.current_preset[self.monitor_idx]
 
     # 清理和退出
     def _cleanup_and_quit(self):

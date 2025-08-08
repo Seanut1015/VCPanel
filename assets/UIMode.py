@@ -47,7 +47,7 @@ class UIMode:
 
         # 顯示並設置滑條面板
         self.slider_panel.show()
-        self.slider_panel.resize(211, 45)
+        self.slider_panel.resize(210, 45)
         self.window.move(self.window.x_default, self.window.y_default)
 
         # 更新窗口狀態
@@ -55,16 +55,13 @@ class UIMode:
 
     def set_expanded(self):
         """設置展開模式 - 顯示所有控制項"""
-        if self.window.compact_mode:
-            return  # 在快捷模式下不執行
-
         # 顯示所有UI元素
         self.button_panel.show()
         self._show_additional_elements()
         self.slider_panel.show()
 
         # 調整窗口大小和位置
-        self.slider_panel.resize(211, 165)
+        self.slider_panel.resize(210, 165)
         self.window.move(self.window.x_default, self.window.y_default - 120)
 
         # 更新窗口狀態

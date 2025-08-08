@@ -5,23 +5,16 @@ from PyQt6.QtCore import QTimer
 
 
 class PresetManager:
-    """預設配置管理器"""
+    """預設配置管理器 - 支援多螢幕"""
 
     # 配置常數
     SETTINGS_SECTION = 'settings'
     HOTKEYS_SECTION = 'hotkeys'
-    CONFIG_KEYS = {
-        'brightness': 'brightness',
-        'contrast': 'contrast',
-        'red': 'red',
-        'green': 'green',
-        'blue': 'blue'
-    }
 
     def __init__(self, config_file='config.ini'):
         self.config_file = config_file
         self.config = configparser.ConfigParser()
-        self._save_timer = None  # 延遲保存定時器
+        self._save_timer = None
         self.load_config()
 
     def load_config(self):
@@ -35,7 +28,6 @@ class PresetManager:
         """創建預設配置"""
         # 設置預設值
         self.config[self.SETTINGS_SECTION] = {
-            'last_preset': '1',
             'auto_hide_seconds': '2'
         }
 
@@ -50,12 +42,99 @@ class PresetManager:
             'brightness_down': 'alt+z'
         }
 
-        # 創建空的預設區段
-        for i in range(1, 5):
-            self.config[f'preset{i}'] = {
-                key: '' for key in self.CONFIG_KEYS.values()}
-
+        # 創建預設的 screen0 區段
+        self._create_screen_section(0)
         self.save_config()
+
+    def _create_screen_section(self, screen_index):
+        """為指定螢幕創建配置區段"""
+        section_name = f'screen{screen_index}'
+        if section_name not in self.config:
+            self.config[section_name] = {
+                'preset_1': '',
+                'preset_2': '',
+                'preset_3': '',
+                'preset_4': ''
+            }
+
+    def ensure_screen_exists(self, screen_index):
+        """確保指定螢幕的配置區段存在"""
+        section_name = f'screen{screen_index}'
+        if section_name not in self.config:
+            self._create_screen_section(screen_index)
+            self.save_config()
+
+    def get_preset(self, screen_index, preset_id):
+        """獲取指定螢幕的預設值"""
+        self.ensure_screen_exists(screen_index)
+
+        section_name = f'screen{screen_index}'
+        preset_key = f'preset_{preset_id}'
+
+        preset_value = self.config.get(section_name, preset_key, fallback='')
+
+        if not preset_value:
+            return None
+
+        try:
+            # 解析類似 "[15, 80, 100, 98, 91]" 的字符串
+            # 移除方括號並分割
+            clean_value = preset_value.strip('[]')
+            values = [int(x.strip()) for x in clean_value.split(',')]
+
+            if len(values) == 5:
+                return values
+            else:
+                return None
+
+        except (ValueError, AttributeError):
+            return None
+
+    def save_preset(self, screen_index, preset_id, values):
+        """保存指定螢幕的預設值"""
+        self.ensure_screen_exists(screen_index)
+
+        section_name = f'screen{screen_index}'
+        preset_key = f'preset_{preset_id}'
+
+        # 格式化為 "[15, 80, 100, 98, 91]" 格式
+        preset_value = f"[{', '.join(map(str, values))}]"
+
+        self.config.set(section_name, preset_key, preset_value)
+        self.save_config()
+
+    def is_preset_empty(self, screen_index, preset_id):
+        """檢查指定螢幕的預設是否為空"""
+        return self.get_preset(screen_index, preset_id) is None
+
+    def get_last_preset(self, screen_index):
+        """獲取指定螢幕最後使用的預設"""
+        key = f'last_preset_screen_{screen_index}'
+        return self.config.getint(self.SETTINGS_SECTION, key, fallback=1)
+
+    def save_last_preset(self, preset_id, screen_index):
+        """保存指定螢幕最後使用的預設"""
+        self._ensure_section_exists(self.SETTINGS_SECTION)
+        key = f'last_preset_screen_{screen_index}'
+        self.config.set(self.SETTINGS_SECTION, key, str(preset_id))
+        self.save_config()
+
+    def get_all_screens(self):
+        """獲取所有螢幕配置區段"""
+        screen_sections = []
+        for section_name in self.config.sections():
+            if section_name.startswith('screen'):
+                try:
+                    screen_index = int(section_name[6:])  # 提取 "screen0" 中的數字
+                    screen_sections.append(screen_index)
+                except ValueError:
+                    continue
+        return sorted(screen_sections)
+
+    def initialize_screens(self, monitor_count):
+        """初始化指定數量的螢幕配置"""
+        for i in range(monitor_count):
+            self.ensure_screen_exists(i)
 
     def save_config(self):
         """保存配置文件（防抖處理）"""
@@ -64,7 +143,6 @@ class PresetManager:
             self._save_timer.setSingleShot(True)
             self._save_timer.timeout.connect(self._do_save_config)
 
-        # 防抖：500ms後保存
         self._save_timer.start(500)
 
     def _do_save_config(self):
@@ -73,52 +151,7 @@ class PresetManager:
             with open(self.config_file, 'w', encoding='utf-8') as configfile:
                 self.config.write(configfile)
         except Exception as e:
-            pass  # 靜默處理錯誤
-
-    def get_preset(self, preset_id):
-        """獲取預設值，如果為空返回None"""
-        section = f'preset{preset_id}'
-        if section not in self.config:
-            return None
-
-        values = [
-            self.config.get(section, key, fallback='')
-            for key in self.CONFIG_KEYS.values()
-        ]
-
-        # 如果任一值為空，返回None表示未設定
-        if any(v == '' for v in values):
-            return None
-
-        try:
-            return [int(v) for v in values]
-        except ValueError:
-            return None
-
-    def save_preset(self, preset_id, values):
-        """保存預設值"""
-        section = f'preset{preset_id}'
-        if section not in self.config:
-            self.config.add_section(section)
-
-        for key, value in zip(self.CONFIG_KEYS.values(), values):
-            self.config.set(section, key, str(value))
-
-        self.save_config()
-
-    def is_preset_empty(self, preset_id):
-        """檢查預設是否為空"""
-        return self.get_preset(preset_id) is None
-
-    def get_last_preset(self):
-        """獲取最後使用的預設"""
-        return self.config.getint(self.SETTINGS_SECTION, 'last_preset', fallback=1)
-
-    def save_last_preset(self, preset_id):
-        """保存最後使用的預設"""
-        self._ensure_section_exists(self.SETTINGS_SECTION)
-        self.config.set(self.SETTINGS_SECTION, 'last_preset', str(preset_id))
-        self.save_config()
+            pass
 
     def get_hotkey_config(self):
         """獲取快捷鍵配置"""
